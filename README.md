@@ -27,13 +27,13 @@ One connection pool. One backup policy. One place to reason about the data.
 
 ### Three roles, one database
 
-| Layer | Tiger Feature | What it does |
-|---|---|---|
-| Semantic memory | pgvectorscale DiskANN | Stores chunked code, ADRs, and prior reviews. 4 specialist agents query it for context on every PR. Replaces Qdrant entirely. |
-| Agent events | Hypertables | Every span, LLM call, tool call, and decision lands in one time-ordered table: `agent_events`. Powers the trace viewer, audit trail, and cost ledger. |
-| Live dashboards | Continuous aggregates | Real-time rollups for cost per PR, p95 latency per agent, rejection rate. Materialized so the dashboard stays fast as history grows from GBs to TBs. |
-| Cost control | Hypertables + aggregates | Token cost attribution per agent span. Budget caps read from the same aggregate the dashboard does. |
-| Coding agent | Tiger MCP | The coding agent driving the build is wired to Tiger via MCP. It introspects schemas, runs queries, and verifies migrations live. |
+| Layer           | Tiger Feature            | What it does                                                                                                                                          |
+| --------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Semantic memory | pgvectorscale DiskANN    | Stores chunked code, ADRs, and prior reviews. 4 specialist agents query it for context on every PR. Replaces Qdrant entirely.                         |
+| Agent events    | Hypertables              | Every span, LLM call, tool call, and decision lands in one time-ordered table: `agent_events`. Powers the trace viewer, audit trail, and cost ledger. |
+| Live dashboards | Continuous aggregates    | Real-time rollups for cost per PR, p95 latency per agent, rejection rate. Materialized so the dashboard stays fast as history grows from GBs to TBs.  |
+| Cost control    | Hypertables + aggregates | Token cost attribution per agent span. Budget caps read from the same aggregate the dashboard does.                                                   |
+| Coding agent    | Tiger MCP                | The coding agent driving the build is wired to Tiger via MCP. It introspects schemas, runs queries, and verifies migrations live.                     |
 
 ### Schema sketch
 
@@ -84,17 +84,17 @@ CREATE INDEX code_chunks_emb_idx ON code_chunks
 
 ## Stack
 
-| Layer | Technology |
-|---|---|
-| Backend | FastAPI (Python 3.10) |
-| Orchestration | LangGraph (parallel fan-out, checkpointing) |
-| Job Queue | Redis + ARQ |
-| Memory | Tiger Cloud (pgvectorscale DiskANN + hypertables) |
-| LLM | OpenAI GPT-4o (routing per agent) |
-| Sandbox | Docker (isolated code execution) |
-| Frontend | Next.js (review dashboard, HITL queue, trace viewer) |
-| Observability | OpenTelemetry + Tiger hypertables |
-| Deploy | Railway |
+| Layer         | Technology                                           |
+| ------------- | ---------------------------------------------------- |
+| Backend       | FastAPI (Python 3.10)                                |
+| Orchestration | LangGraph (parallel fan-out, checkpointing)          |
+| Job Queue     | Redis + ARQ                                          |
+| Memory        | Tiger Cloud (pgvectorscale DiskANN + hypertables)    |
+| LLM           | OpenAI GPT-4o (routing per agent)                    |
+| Sandbox       | Docker (isolated code execution)                     |
+| Frontend      | Next.js (review dashboard, HITL queue, trace viewer) |
+| Observability | OpenTelemetry + Tiger hypertables                    |
+| Deploy        | Railway                                              |
 
 ---
 
@@ -176,29 +176,29 @@ Health check: `GET /health`
 
 Each phase is one chapter in the course. Ends green. Has a written gate before the next phase starts. Tiger Cloud is load-bearing in 5 phases.
 
-| # | Phase | Tiger |
-|---|---|---|
-| 0 | Cognitive Design — autonomy level, HITL boundaries | |
-| 1 | System Architecture — module graph, ADRs | |
-| 2 | Frontend Engineering — dashboard shell, streaming | |
-| 3 | Backend and API Layer — FastAPI, webhook, idempotency | |
-| 4 | Workflow Orchestration — LangGraph, parallel fan-out | |
-| 5 | LLM and Reasoning Layer — model routing, prompt registry | |
-| 6 | Memory Architecture — RAG on pgvectorscale, hybrid retrieval | Tiger |
-| 7 | Tooling and Sandboxing — tool registry, Docker sandbox | |
-| 8 | Multi-Agent Systems — 4 specialists, contracts, aggregator | |
-| 9 | Evaluation Systems — golden dataset, LLM-as-judge | |
-| 10 | Observability and Tracing — OTel spans in agent_events hypertable | Tiger |
-| 11 | Security Architecture — threat model, RBAC, audit trail | |
-| 12 | Reliability Engineering — retries, circuit breakers, idempotency | |
-| 13 | Infrastructure — Tiger Cloud provisioning, Tiger MCP wiring | Tiger |
-| 14 | Data Engineering — ingestion pipeline, hypertable schema design | Tiger |
-| 15 | Governance and Compliance — audit logs, explainability | |
-| 16 | Economics and Cost Control — per-agent cost via continuous aggregates | Tiger |
-| 17 | Developer Experience — prompt playground, trace viewer | |
-| 18 | CI/CD for AI — prompt versioning, eval gates, canary releases | |
-| 19 | Human in the Loop — approval queue, escalation, feedback | |
-| 20 | Continuous Learning — drift detection from continuous aggregates | Tiger |
+| #   | Phase                                                                 | Tiger |
+| --- | --------------------------------------------------------------------- | ----- |
+| 0   | Cognitive Design — autonomy level, HITL boundaries                    |       |
+| 1   | System Architecture — module graph, ADRs                              |       |
+| 2   | Frontend Engineering — dashboard shell, streaming                     |       |
+| 3   | Backend and API Layer — FastAPI, webhook, idempotency                 |       |
+| 4   | Workflow Orchestration — LangGraph, parallel fan-out                  |       |
+| 5   | LLM and Reasoning Layer — model routing, prompt registry              |       |
+| 6   | Memory Architecture — RAG on pgvectorscale, hybrid retrieval          | Tiger |
+| 7   | Tooling and Sandboxing — tool registry, Docker sandbox                |       |
+| 8   | Multi-Agent Systems — 4 specialists, contracts, aggregator            |       |
+| 9   | Evaluation Systems — golden dataset, LLM-as-judge                     |       |
+| 10  | Observability and Tracing — OTel spans in agent_events hypertable     | Tiger |
+| 11  | Security Architecture — threat model, RBAC, audit trail               |       |
+| 12  | Reliability Engineering — retries, circuit breakers, idempotency      |       |
+| 13  | Infrastructure — Tiger Cloud provisioning, Tiger MCP wiring           | Tiger |
+| 14  | Data Engineering — ingestion pipeline, hypertable schema design       | Tiger |
+| 15  | Governance and Compliance — audit logs, explainability                |       |
+| 16  | Economics and Cost Control — per-agent cost via continuous aggregates | Tiger |
+| 17  | Developer Experience — prompt playground, trace viewer                |       |
+| 18  | CI/CD for AI — prompt versioning, eval gates, canary releases         |       |
+| 19  | Human in the Loop — approval queue, escalation, feedback              |       |
+| 20  | Continuous Learning — drift detection from continuous aggregates      | Tiger |
 
 ---
 
@@ -241,7 +241,3 @@ prompts/            Versioned prompt files per agent
 - Continuous aggregates keep the dashboard fast at any scale — no full table scans
 - DiskANN index over `code_chunks` gives 28x lower p95 latency than Pinecone at 99% recall
 - HITL threshold is confidence-weighted — low-confidence findings queue for human review
-
----
-
-Built by [Ayush Singh](https://github.com/ayush488-glitch)
