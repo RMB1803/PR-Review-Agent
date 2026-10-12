@@ -26,8 +26,8 @@ jobs:
 
       - name: Run tests
         env:
-          TIGER_DATABASE_URL: postgresql://test:test@localhost:5432/test  
           PYTHONPATH: .
+          TIGER_DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
         run: python -m pytest -q
 
       - name: Build Docker image
