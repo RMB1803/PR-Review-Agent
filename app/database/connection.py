@@ -18,8 +18,13 @@ class Base(DeclarativeBase):
 # Database engine and connection pool.
 settings = get_settings()
 
+database_url = settings.tiger_database_url.replace(
+    "postgres://", "postgresql+asyncpg://", 1
+).replace("sslmode=require", "ssl=require")
+
+
 engine = create_async_engine(
-    settings.tiger_database_url,
+    database_url,
     pool_pre_ping=True,
     echo=False,
 )

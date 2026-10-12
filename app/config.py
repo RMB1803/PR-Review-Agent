@@ -21,15 +21,16 @@ class Settings(BaseSettings):
 
     # Tiger Cloud PostgreSQL
     tiger_database_url: str
-
-    # OpenAI
-    openai_api_key: str = ""
-    openai_embedding_model: str = "text-embedding-3-large"
     tiger_embedding_dim: int = 256
 
-    # Security agent
-    security_provider: str = "openai"
-    security_model: str = "gpt-4o"
+    # Google Gemini
+    gemini_api_key: str = ""
+    gemini_chat_model: str = "gemini-2.5-flash"
+    gemini_embedding_model: str = "gemini-embedding-001"
+
+    # Security and review agents
+    security_provider: str = "gemini"
+    security_model: str = "gemini-2.5-flash"
 
     # Application
     app_env: str = "development"

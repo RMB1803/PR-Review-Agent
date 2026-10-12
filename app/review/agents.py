@@ -3,7 +3,8 @@ import logging
 import re
 from typing import Any
 
-from openai import AsyncOpenAI
+from google import genai
+from google.genai import types
 
 from app.config import get_settings
 
@@ -14,7 +15,6 @@ def _extract_json(text: str) -> list[dict[str, Any]]:
     """Extract findings from the model's JSON response."""
     text = text.strip()
 
-    # Handle JSON wrapped in Markdown code fences.
     match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
     if match:
         text = match.group(1).strip()
@@ -40,7 +40,6 @@ class BaseReviewAgent:
     """Shared functionality for code review agents."""
 
     agent_type = "agent"
-    model = "gpt-4o-mini"
     focus = ""
 
     async def analyze(
@@ -57,8 +56,14 @@ class BaseReviewAgent:
         if not diff or not diff.strip():
             return [], 1.0, "approve"
 
-        if not cfg.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is not configured.")
+        if not cfg.gemini_api_key:
+            raise RuntimeError("GEMINI_API_KEY is not configured.")
+
+        model = (
+            cfg.security_model
+            if self.agent_type == "security"
+            else cfg.gemini_chat_model
+        )
 
         prompt = f"""
 You are a senior {self.focus} engineer reviewing a pull request.
@@ -90,38 +95,35 @@ Return a JSON object in this format:
   ]
 }}
 
-Allowed severity values: critical, high, medium, low, info.
+Allowed severity values: critical, high, medium, low.
 If no issues are found, return {{"findings": []}}.
 Return JSON only. Do not invent file paths or line numbers.
 """
 
+        client = genai.Client(api_key=cfg.gemini_api_key)
+
         try:
-            client = AsyncOpenAI(api_key=cfg.openai_api_key)
+            response = await client.aio.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=(
+                        "You perform precise code reviews. "
+                        "Report only actionable issues and return valid JSON."
+                    ),
+                    response_mime_type="application/json",
+                ),
+            )
 
-            try:
-                response = await client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You perform precise code reviews. "
-                                "Report only actionable issues and return valid JSON."
-                            ),
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                )
-            finally:
-                await client.close()
-
-            text = response.choices[0].message.content or ""
+            text = response.text or ""
             findings = _extract_json(text)
 
         except Exception:
             logger.exception("%s agent failed", self.agent_type)
             raise
+
+        finally:
+            await client.aio.aclose()
 
         for finding in findings:
             finding["agent_type"] = self.agent_type
@@ -139,7 +141,6 @@ Return JSON only. Do not invent file paths or line numbers.
 
         verdict = "request_changes" if has_high_severity else "approve"
 
-        # Confidence is retained only for compatibility with the current graph.
         return findings, 1.0, verdict
 
 
@@ -147,19 +148,11 @@ class SecurityAgent(BaseReviewAgent):
     """Find security vulnerabilities in PR changes."""
 
     agent_type = "security"
-    model = "gpt-4o"
     focus = "application security"
-
-    def __init__(self):
-        self.agent_type = "security"
 
 
 class QualityAgent(BaseReviewAgent):
     """Find code quality and maintainability issues."""
 
     agent_type = "quality"
-    model = "gpt-4o-mini"
     focus = "code quality and maintainability"
-
-    def __init__(self):
-        self.agent_type = "quality"

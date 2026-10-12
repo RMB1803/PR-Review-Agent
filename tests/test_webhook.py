@@ -93,7 +93,7 @@ async def test_webhook_successful_enqueue():
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/webhook/github", content=body, headers=headers)
-            assert resp.status_code == 200
+            assert resp.status_code == 202
             data = resp.json()
             assert data["status"] == "queued"
             assert data["workflow_id"] == "org/repo:42:abc1234567890"

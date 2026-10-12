@@ -1,6 +1,7 @@
 import logging
 
-from openai import AsyncOpenAI
+from google import genai
+from google.genai import types
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -15,28 +16,44 @@ MIN_SIMILARITY_SCORE = 0.5
 
 
 async def embed_text(text: str, settings=None) -> list[float]:
-    """Generate a 256-dimensional embedding using OpenAI."""
+    """Generate a 256-dimensional Gemini embedding."""
     if not text or not text.strip():
         return []
 
     cfg = settings or get_settings()
 
-    if not cfg.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is not configured.")
+    if not cfg.gemini_api_key:
+        raise RuntimeError("GEMINI_API_KEY is not configured.")
 
-    client = AsyncOpenAI(api_key=cfg.openai_api_key)
+    client = genai.Client(api_key=cfg.gemini_api_key)
 
     try:
-        response = await client.embeddings.create(
-            model=cfg.openai_embedding_model,
-            input=text[:MAX_EMBED_CHARS],
-            dimensions=cfg.tiger_embedding_dim,
+        response = await client.aio.models.embed_content(
+            model=cfg.gemini_embedding_model,
+            contents=text[:MAX_EMBED_CHARS],
+            config=types.EmbedContentConfig(
+                output_dimensionality=cfg.tiger_embedding_dim,
+            ),
         )
 
-        return response.data[0].embedding
+        if not response.embeddings:
+            raise RuntimeError("Gemini returned no embeddings.")
+
+        vector = response.embeddings[0].values
+
+        if vector is None:
+            raise RuntimeError("Gemini returned an empty embedding.")
+
+        if len(vector) != cfg.tiger_embedding_dim:
+            raise RuntimeError(
+                f"Expected {cfg.tiger_embedding_dim} embedding dimensions, "
+                f"received {len(vector)}."
+            )
+
+        return vector
 
     finally:
-        await client.close()
+        await client.aio.aclose()
 
 
 async def retrieve_context_for_diff(
