@@ -26,8 +26,9 @@ jobs:
 
       - name: Run tests
         env:
-          TIGER_DATABASE_URL: postgresql://test:test@localhost:5432/test
-        run: pytest -q
+          TIGER_DATABASE_URL: postgresql://test:test@localhost:5432/test  
+          PYTHONPATH: .
+        run: python -m pytest -q
 
       - name: Build Docker image
         run: docker build -t pr-review-agent:${{ github.sha }} .
