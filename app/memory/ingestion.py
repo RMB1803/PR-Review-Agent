@@ -1,22 +1,15 @@
-# app/memory/ingestion.py
-"""
-Repository code ingestion pipeline.
-Fetches source code files from GitHub, chunks/embeds them, and saves to code_chunks.
-"""
-
-from __future__ import annotations
-
+import base64
 import logging
-from typing import Any
 import uuid
+from datetime import datetime, timezone
+from typing import Any
 
 import httpx
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, select
 
 from app.config import get_settings
-from app.database.connection import get_session_factory, get_tiger_pool
-from app.database.models import RepoFileIndexRecord
+from app.database.connection import SessionLocal
+from app.database.models import CodeChunkRecord, RepoFileIndexRecord
 from app.memory.retriever import embed_text
 
 logger = logging.getLogger(__name__)
@@ -26,39 +19,32 @@ CODE_EXTENSIONS = {
     ".go", ".java", ".rb", ".rs", ".cpp",
     ".c", ".h", ".cs", ".swift", ".kt",
 }
+
 MAX_FILE_BYTES = 100_000
+CHUNK_SIZE = 3000
+CHUNK_OVERLAP = 300
 
 
-async def get_stale_files(
-    session: AsyncSession,
-    repo_full_name: str,
-    file_sha_map: dict[str, str],
-) -> dict[str, str]:
-    if not file_sha_map:
-        return {}
+def split_into_chunks(text: str) -> list[str]:
+    """Split source code into overlapping text chunks."""
+    chunks = []
+    start = 0
 
-    stmt = select(
-        RepoFileIndexRecord.file_path,
-        RepoFileIndexRecord.file_sha,
-    ).where(RepoFileIndexRecord.repo_full_name == repo_full_name)
+    while start < len(text):
+        chunk = text[start:start + CHUNK_SIZE]
 
-    result = await session.execute(stmt)
-    rows = result.all()
-    embedded = {row.file_path: row.file_sha for row in rows}
+        if chunk.strip():
+            chunks.append(chunk)
 
-    stale: dict[str, str] = {}
-    for path, sha in file_sha_map.items():
-        if embedded.get(path) != sha:
-            stale[path] = sha
+        start += CHUNK_SIZE - CHUNK_OVERLAP
 
-    return stale
+    return chunks
 
 
 async def ingest_repository(repo_full_name: str) -> dict[str, Any]:
-    """
-    Ingests source files from a GitHub repository into code_chunks.
-    """
+    """Index repository source files in Tiger Cloud."""
     cfg = get_settings()
+
     summary = {
         "repo": repo_full_name,
         "total_files": 0,
@@ -68,74 +54,160 @@ async def ingest_repository(repo_full_name: str) -> dict[str, Any]:
     }
 
     if not cfg.github_token:
-        logger.warning("ingest_repository | skipped — github_token not set")
+        logger.warning("GitHub token is not configured.")
         return summary
 
     headers = {
         "Authorization": f"Bearer {cfg.github_token}",
         "Accept": "application/vnd.github+json",
-        "User-Agent": "pr-review-agent/1.0",
+        "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    try:
-        async with httpx.AsyncClient(headers=headers, timeout=20.0) as client:
-            resp = await client.get(
-                f"{cfg.github_api_base_url.rstrip('/')}/repos/{repo_full_name}/git/trees/HEAD?recursive=1"
-            )
-            if resp.status_code != 200:
-                logger.warning("ingest_repository | tree fetch failed | status=%s", resp.status_code)
-                return summary
+    base_url = cfg.github_api_base_url.rstrip("/")
 
-            tree_data = resp.json().get("tree", [])
+    try:
+        async with httpx.AsyncClient(
+            headers=headers,
+            timeout=30.0,
+        ) as client:
+            # Fetch the repository file tree.
+            response = await client.get(
+                f"{base_url}/repos/{repo_full_name}/git/trees/HEAD",
+                params={"recursive": "1"},
+            )
+            response.raise_for_status()
+
+            tree = response.json().get("tree", [])
+
             code_files = {
                 item["path"]: item["sha"]
-                for item in tree_data
+                for item in tree
                 if item.get("type") == "blob"
-                and any(item["path"].endswith(ext) for ext in CODE_EXTENSIONS)
+                and item.get("size", 0) <= MAX_FILE_BYTES
+                and any(
+                    item["path"].endswith(ext)
+                    for ext in CODE_EXTENSIONS
+                )
             }
+
             summary["total_files"] = len(code_files)
 
-            session_factory = get_session_factory()
-            async with session_factory() as session:
-                stale = await get_stale_files(session, repo_full_name, code_files)
-                summary["stale_files"] = len(stale)
-
-            pool = get_tiger_pool()
-            if pool is None:
-                logger.warning("ingest_repository | tiger pool not available")
-                return summary
-
-            for path, sha in stale.items():
-                try:
-                    f_resp = await client.get(
-                        f"{cfg.github_api_base_url.rstrip('/')}/repos/{repo_full_name}/contents/{path}"
+            # Find files that are new or have changed.
+            async with SessionLocal() as session:
+                result = await session.execute(
+                    select(
+                        RepoFileIndexRecord.file_path,
+                        RepoFileIndexRecord.file_sha,
+                    ).where(
+                        RepoFileIndexRecord.repo_full_name == repo_full_name
                     )
-                    if f_resp.status_code != 200:
-                        continue
-                    file_content = f_resp.text
-                    vector = await embed_text(file_content, cfg)
-                    if all(v == 0.0 for v in vector):
+                )
+
+                existing_files = {
+                    row.file_path: row.file_sha
+                    for row in result.all()
+                }
+
+            stale_files = {
+                path: sha
+                for path, sha in code_files.items()
+                if existing_files.get(path) != sha
+            }
+
+            summary["stale_files"] = len(stale_files)
+
+            # Fetch, chunk, embed, and store changed files.
+            for path, sha in stale_files.items():
+                try:
+                    response = await client.get(
+                        f"{base_url}/repos/{repo_full_name}/contents/{path}"
+                    )
+                    response.raise_for_status()
+
+                    file_data = response.json()
+                    encoded_content = file_data.get("content", "")
+
+                    if not encoded_content:
                         continue
 
-                    vector_str = f"[{','.join(str(x) for x in vector)}]"
-                    chunk_id = str(uuid.uuid4())
+                    content = base64.b64decode(
+                        encoded_content
+                    ).decode("utf-8", errors="replace")
 
-                    async with pool.acquire() as conn:
-                        await conn.execute(
-                            """
-                            INSERT INTO code_chunks (id, repo, path, content, embedding)
-                            VALUES ($1, $2, $3, $4, $5::vector)
-                            ON CONFLICT (id) DO NOTHING;
-                            """,
-                            chunk_id, repo_full_name, path, file_content[:4000], vector_str
+                    chunks = split_into_chunks(content)
+
+                    if not chunks:
+                        continue
+
+                    embedded_chunks = []
+
+                    for index, chunk in enumerate(chunks):
+                        vector = await embed_text(chunk, cfg)
+
+                        if len(vector) != cfg.tiger_embedding_dim:
+                            raise ValueError(
+                                f"Expected {cfg.tiger_embedding_dim} "
+                                f"embedding dimensions, got {len(vector)}"
+                            )
+
+                        embedded_chunks.append(
+                            CodeChunkRecord(
+                                id=uuid.uuid4(),
+                                repo_full_name=repo_full_name,
+                                file_path=path,
+                                chunk_index=index,
+                                content=chunk,
+                                embedding=vector,
+                            )
                         )
+
+                    # Replace the old chunks and update the file index.
+                    async with SessionLocal() as session:
+                        await session.execute(
+                            delete(CodeChunkRecord).where(
+                                CodeChunkRecord.repo_full_name
+                                == repo_full_name,
+                                CodeChunkRecord.file_path == path,
+                            )
+                        )
+
+                        session.add_all(embedded_chunks)
+
+                        index_result = await session.execute(
+                            select(RepoFileIndexRecord).where(
+                                RepoFileIndexRecord.repo_full_name
+                                == repo_full_name,
+                                RepoFileIndexRecord.file_path == path,
+                            )
+                        )
+
+                        index_record = index_result.scalar_one_or_none()
+
+                        if index_record is None:
+                            index_record = RepoFileIndexRecord(
+                                repo_full_name=repo_full_name,
+                                file_path=path,
+                                file_sha=sha,
+                            )
+                            session.add(index_record)
+
+                        index_record.file_sha = sha
+                        index_record.last_indexed_at = datetime.now(
+                            timezone.utc
+                        )
+                        index_record.token_count = len(content.split())
+                        index_record.chunk_count = len(embedded_chunks)
+
+                        await session.commit()
+
                     summary["embedded"] += 1
-                except Exception as file_err:
-                    logger.debug("ingest_repository | file_error | path=%s err=%s", path, file_err)
+
+                except Exception:
+                    logger.exception("Failed to index %s", path)
                     summary["errors"] += 1
 
-    except Exception as exc:
-        logger.warning("ingest_repository | error=%s", exc)
+    except Exception:
+        logger.exception("Repository ingestion failed: %s", repo_full_name)
         summary["errors"] += 1
 
     return summary

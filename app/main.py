@@ -1,44 +1,31 @@
-# app/main.py
-"""
-FastAPI application entry point.
-"""
-
-from contextlib import asynccontextmanager
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from app.api.webhook import router as webhook_router
 from app.config import get_settings
-from app.database.connection import init_db, init_tiger_schema
+from app.database.connection import close_db
+
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
+
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan: database initialization and cleanup."""
-    logger.info("Application starting up...")
-    try:
-        await init_db()
-        logger.info("Database tables initialized.")
-    except Exception as exc:
-        logger.warning("PostgreSQL init_db skipped/failed: %s", exc)
-
-    try:
-        await init_tiger_schema()
-        logger.info("Tiger Cloud schema initialized.")
-    except Exception as exc:
-        logger.warning("Tiger Cloud schema init skipped/failed: %s", exc)
+    """Manage application startup and shutdown."""
+    logger.info("PR Review Agent starting up.")
 
     yield
 
-    logger.info("Application shutting down...")
+    logger.info("PR Review Agent shutting down.")
+    await close_db()
 
 
 app = FastAPI(
@@ -53,12 +40,13 @@ app.include_router(webhook_router)
 
 @app.get("/health", tags=["system"])
 async def health_check():
-    """Health check endpoint."""
-    cfg = get_settings()
+    """Check application health."""
+    settings = get_settings()
+
     return JSONResponse(
         content={
             "status": "healthy",
-            "app_env": cfg.app_env,
+            "app_env": settings.app_env,
             "version": "1.0.0",
         }
     )
