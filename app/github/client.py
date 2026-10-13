@@ -74,6 +74,12 @@ class GitHubClient:
             f"{self.base_url}/repos/{repo_full_name}/pulls/{pr_number}/reviews",
             json=payload,
         )
+
+        if response.is_error:
+            print(f"GitHub review failed: HTTP {response.status_code}")
+            print(f"GitHub error response: {response.text}")
+            print(f"Review payload: {payload}")
+
         response.raise_for_status()
         return response.json()
 

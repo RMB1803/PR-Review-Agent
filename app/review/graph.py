@@ -133,6 +133,10 @@ async def post_review_node(
             else "APPROVE"
         )
 
+        # Avoid requesting changes on our own pull request.
+        if state.get("author_login", "").lower() == "rmb1803":
+            event = "COMMENT"
+
         try:
             async with GitHubClient(cfg) as client:
                 response = await client.post_pr_review(

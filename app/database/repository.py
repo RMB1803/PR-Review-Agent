@@ -30,7 +30,7 @@
 import hashlib
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import FindingRecord, PRReviewRecord
@@ -50,21 +50,42 @@ async def save_review(
     findings: list[dict[str, Any]],
     github_review_id: int | None = None,
 ) -> PRReviewRecord:
-    """Save a PR review and its findings."""
+    """Insert or update a PR review and its findings."""
 
-    review = PRReviewRecord(
-        id=review_id,
-        repo_full_name=repo_full_name,
-        pr_number=pr_number,
-        pr_title=pr_title,
-        head_commit_sha=head_commit_sha,
-        diff_hash=hashlib.sha256(pr_diff.encode()).hexdigest(),
-        verdict=verdict,
-        status=status,
-        github_review_id=github_review_id,
+    result = await session.execute(
+        select(PRReviewRecord).where(PRReviewRecord.id == review_id)
     )
+    review = result.scalar_one_or_none()
 
-    session.add(review)
+    if review is None:
+        review = PRReviewRecord(
+            id=review_id,
+            repo_full_name=repo_full_name,
+            pr_number=pr_number,
+            pr_title=pr_title,
+            head_commit_sha=head_commit_sha,
+            diff_hash=hashlib.sha256(pr_diff.encode()).hexdigest(),
+            verdict=verdict,
+            status=status,
+            github_review_id=github_review_id,
+        )
+        session.add(review)
+    else:
+        review.repo_full_name = repo_full_name
+        review.pr_number = pr_number
+        review.pr_title = pr_title
+        review.head_commit_sha = head_commit_sha
+        review.diff_hash = hashlib.sha256(pr_diff.encode()).hexdigest()
+        review.verdict = verdict
+        review.status = status
+        review.github_review_id = github_review_id
+
+        # Replace findings associated with this review.
+        await session.execute(
+            delete(FindingRecord).where(
+                FindingRecord.review_id == review_id
+            )
+        )
 
     for finding in findings:
         session.add(
